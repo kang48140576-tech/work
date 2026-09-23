@@ -1,0 +1,1405 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>매출 분석 대시보드</title>
+    <!-- Tailwind CSS for styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Chart.js for data visualization -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <!-- PapaParse for CSV parsing -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+    <!-- Phosphor Icons -->
+    <script src="https://unpkg.com/@phosphor-icons/web"></script>
+    <!-- html2pdf for exporting dashboard to PDF -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        primary: '#4F46E5', // Indigo 600
+                        secondary: '#10B981', // Emerald 500
+                        dark: '#1F2937',
+                        light: '#F3F4F6'
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+        body { font-family: 'Inter', sans-serif; background-color: #f3f4f6; }
+        .glass-card {
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+        }
+        /* Custom scrollbar for better look */
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-track { background: #f1f1f1; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb { background: #c1c1c1; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #a8a8a8; }
+
+        /* PDF Export & Print Styles */
+        .pdf-page-break {
+            display: none;
+        }
+        .pdf-avoid-break {
+            break-inside: avoid !important;
+            page-break-inside: avoid !important;
+        }
+        .exporting-pdf {
+            background-color: #f8fafc !important;
+        }
+        .exporting-pdf-landscape {
+            width: 1140px !important;
+            margin: 0 auto !important;
+        }
+        .exporting-pdf-portrait {
+            width: 820px !important;
+            margin: 0 auto !important;
+        }
+        .exporting-pdf .no-pdf {
+            display: none !important;
+        }
+        .exporting-pdf .glass-card {
+            background-color: #ffffff !important;
+            backdrop-filter: none !important;
+            box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.08) !important;
+            border: 1px solid #e2e8f0 !important;
+        }
+        .exporting-pdf .pdf-page-break {
+            display: block !important;
+            height: 1px !important;
+            margin: 16px 0 !important;
+            page-break-before: always !important;
+            break-before: page !important;
+        }
+        .exporting-pdf #dataTableCard {
+            height: auto !important;
+            max-height: none !important;
+            overflow: visible !important;
+        }
+        .exporting-pdf #dataTableScrollContainer {
+            overflow: visible !important;
+            max-height: none !important;
+        }
+
+        /* Print Media Query */
+        @media print {
+            @page {
+                size: A4 landscape;
+                margin: 10mm;
+            }
+            body {
+                background: #ffffff !important;
+            }
+            header, #welcomeState, #loadingIndicator, .no-print, #calcContainer {
+                display: none !important;
+            }
+            #dashboardContent {
+                display: block !important;
+                width: 100% !important;
+            }
+            #pdfReportHeader {
+                display: block !important;
+            }
+            .pdf-avoid-break {
+                break-inside: avoid;
+                page-break-inside: avoid;
+            }
+            .pdf-page-break {
+                display: block;
+                page-break-before: always;
+                break-before: page;
+            }
+            #dataTableCard {
+                height: auto !important;
+                max-height: none !important;
+                overflow: visible !important;
+            }
+            #dataTableScrollContainer {
+                overflow: visible !important;
+            }
+        }
+    </style>
+</head>
+<body class="text-gray-800 antialiased min-h-screen flex flex-col">
+
+    <!-- Header -->
+    <header class="bg-white shadow-sm sticky top-0 z-10">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex flex-col sm:flex-row justify-between items-center gap-4">
+            <div class="flex items-center gap-2">
+                <i class="ph-fill ph-chart-line-up text-3xl text-primary"></i>
+                <h1 class="text-2xl font-bold text-gray-900">매출 분석 대시보드</h1>
+            </div>
+            
+            <div class="flex flex-col sm:flex-row items-center gap-4">
+                <!-- Store Selection Dropdown (Hidden initially) -->
+                <div id="storeSelectorContainer" class="hidden flex items-center gap-2">
+                    <label for="storeSelect" class="text-sm font-medium text-gray-700 whitespace-nowrap">
+                        <i class="ph ph-storefront"></i> 지점 선택:
+                    </label>
+                    <select id="storeSelect" onchange="handleStoreSelection(this.value)" class="block w-48 pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-primary focus:border-primary sm:text-sm rounded-md shadow-sm border bg-white">
+                        <option value="all">전체 지점 보기</option>
+                        <!-- Options will be populated dynamically -->
+                    </select>
+                </div>
+
+                <!-- Date Range Selector (Hidden initially) -->
+                <div id="dateSelectorContainer" class="hidden flex items-center gap-2">
+                    <label class="text-sm font-medium text-gray-700 whitespace-nowrap">
+                        <i class="ph ph-calendar"></i> 기간:
+                    </label>
+                    <div class="flex items-center gap-1 bg-white border border-gray-300 rounded-md shadow-sm px-2 py-1.5 focus-within:ring-1 focus-within:ring-primary focus-within:border-primary">
+                        <input type="date" id="startDate" onchange="handleDateRangeChange()" class="text-sm focus:outline-none bg-transparent text-gray-700">
+                        <span class="text-gray-400 font-bold">~</span>
+                        <input type="date" id="endDate" onchange="handleDateRangeChange()" class="text-sm focus:outline-none bg-transparent text-gray-700">
+                    </div>
+                </div>
+
+                <!-- PDF Export Button Group (Hidden initially, shown when data loaded) -->
+                <div id="btnExportPdf" class="hidden relative inline-flex rounded-lg shadow-sm">
+                    <button onclick="exportDashboardToPdf('landscape')" class="bg-emerald-600 hover:bg-emerald-700 text-white font-medium py-2 px-3.5 rounded-l-lg transition-all flex items-center gap-1.5 cursor-pointer active:scale-95" title="대시보드에 최적화된 가로 A4 PDF로 다운로드">
+                        <i class="ph ph-file-pdf text-lg" id="btnExportPdfIcon"></i>
+                        <span id="btnExportPdfText">PDF 가로 저장</span>
+                    </button>
+                    <button onclick="togglePdfMenu(event)" class="bg-emerald-700 hover:bg-emerald-800 text-white px-2 py-2 rounded-r-lg border-l border-emerald-500 transition-colors cursor-pointer flex items-center justify-center" title="PDF 저장 옵션 (가로/세로)">
+                        <i class="ph-bold ph-caret-down text-xs"></i>
+                    </button>
+                    <!-- Dropdown Menu for Orientation Choice -->
+                    <div id="pdfMenuDropdown" class="hidden absolute right-0 top-full mt-1.5 w-44 bg-white rounded-xl shadow-xl border border-gray-200 py-1.5 z-50 text-sm">
+                        <button onclick="selectPdfOrientation('landscape')" class="w-full px-3.5 py-2 text-left text-gray-700 hover:bg-emerald-50 hover:text-emerald-700 flex items-center gap-2 transition-colors cursor-pointer">
+                            <i class="ph-bold ph-browser text-emerald-600 text-base"></i>
+                            <div>
+                                <div class="font-semibold text-xs text-gray-900">가로 방향 (A4)</div>
+                                <div class="text-[11px] text-gray-400">대시보드 최적화 (추천)</div>
+                            </div>
+                        </button>
+                        <button onclick="selectPdfOrientation('portrait')" class="w-full px-3.5 py-2 text-left text-gray-700 hover:bg-emerald-50 hover:text-emerald-700 flex items-center gap-2 transition-colors cursor-pointer">
+                            <i class="ph-bold ph-file-text text-gray-500 text-base"></i>
+                            <div>
+                                <div class="font-semibold text-xs text-gray-900">세로 방향 (A4)</div>
+                                <div class="text-[11px] text-gray-400">일반 문서형</div>
+                            </div>
+                        </button>
+                    </div>
+                </div>
+
+                <label for="csvFileInput" class="cursor-pointer bg-primary hover:bg-indigo-700 text-white font-medium py-2 px-4 rounded-lg shadow-sm transition-colors flex items-center gap-2">
+                    <i class="ph ph-upload-simple text-lg"></i>
+                    CSV 파일 업로드
+                </label>
+                <input type="file" id="csvFileInput" accept=".csv" class="hidden" />
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Content -->
+    <main class="flex-grow max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 w-full">
+        
+        <!-- Loading State Indicator -->
+        <div id="loadingIndicator" class="hidden flex justify-center items-center py-12">
+            <div class="animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div>
+            <span class="ml-3 text-lg text-gray-600">데이터를 분석하는 중입니다...</span>
+        </div>
+
+        <!-- Dashboard Content (Initially Hidden until data is loaded) -->
+        <div id="dashboardContent" class="hidden space-y-6">
+
+            <!-- PDF Report Header (Visible only during PDF export / print) -->
+            <div id="pdfReportHeader" class="hidden bg-white p-6 rounded-xl border border-gray-200 mb-2 pdf-avoid-break">
+                <div class="flex justify-between items-center pb-4 border-b border-gray-200">
+                    <div>
+                        <div class="flex items-center gap-2">
+                            <i class="ph-fill ph-chart-line-up text-2xl text-primary"></i>
+                            <h2 class="text-2xl font-bold text-gray-900">매출 분석 종합 보고서</h2>
+                        </div>
+                        <p class="text-xs text-gray-500 mt-1" id="pdfReportGeneratedAt">생성 일시: -</p>
+                    </div>
+                    <div class="text-right">
+                        <span class="inline-block bg-indigo-50 text-indigo-700 text-xs font-semibold px-2.5 py-1 rounded">
+                            Sales Analytics Report
+                        </span>
+                        <div class="text-xs text-gray-600 mt-1 font-medium" id="pdfReportFilterInfo">점포: 전체 지점</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Dashboard Action Bar (On-screen quick export) -->
+            <div class="flex flex-wrap items-center justify-between gap-4 pb-2 border-b border-gray-200 no-pdf">
+                <div class="flex items-center gap-2 text-gray-700">
+                    <i class="ph-bold ph-gauge text-xl text-primary"></i>
+                    <h2 class="text-lg font-bold">분석 요약 보고서</h2>
+                    <span class="text-xs text-gray-400 font-medium ml-1">실시간 집계 완료</span>
+                </div>
+                <div class="flex items-center gap-2">
+                    <button onclick="exportDashboardToPdf('landscape')" class="bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium py-2 px-3.5 rounded-lg shadow-sm transition-all flex items-center gap-1.5 active:scale-95 cursor-pointer" title="가로 A4 PDF 다운로드">
+                        <i class="ph ph-file-pdf text-base"></i>
+                        <span>PDF 가로 저장 (권장)</span>
+                    </button>
+                    <button onclick="exportDashboardToPdf('portrait')" class="bg-white hover:bg-gray-50 text-gray-700 border border-gray-200 text-sm font-medium py-2 px-3 rounded-lg shadow-sm transition-all flex items-center gap-1.5 active:scale-95 cursor-pointer" title="세로 A4 PDF 다운로드">
+                        <i class="ph ph-file-text text-base text-gray-500"></i>
+                        <span>세로 저장</span>
+                    </button>
+                </div>
+            </div>
+            
+            <!-- KPI Summary Cards -->
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 pdf-avoid-break">
+                <!-- Total Revenue -->
+                <div class="glass-card rounded-xl p-6 flex items-center gap-4 border-l-4 border-primary">
+                    <div class="bg-indigo-100 p-3 rounded-full text-primary">
+                        <i class="ph ph-currency-krw text-2xl"></i>
+                    </div>
+                    <div>
+                        <p class="text-sm text-gray-500 font-medium">총 매출액</p>
+                        <h3 class="text-2xl font-bold text-gray-900" id="kpiTotalRevenue">0 원</h3>
+                    </div>
+                </div>
+                
+                <!-- Total Sales Volume -->
+                <div class="glass-card rounded-xl p-6 flex items-center gap-4 border-l-4 border-secondary">
+                    <div class="bg-emerald-100 p-3 rounded-full text-secondary">
+                        <i class="ph ph-shopping-cart text-2xl"></i>
+                    </div>
+                    <div>
+                        <p class="text-sm text-gray-500 font-medium">총 판매 수량</p>
+                        <h3 class="text-2xl font-bold text-gray-900" id="kpiTotalQuantity">0 개</h3>
+                    </div>
+                </div>
+
+                <!-- Total Discount -->
+                <div class="glass-card rounded-xl p-6 flex items-center gap-4 border-l-4 border-yellow-500">
+                    <div class="bg-yellow-100 p-3 rounded-full text-yellow-600">
+                        <i class="ph ph-tag text-2xl"></i>
+                    </div>
+                    <div>
+                        <p class="text-sm text-gray-500 font-medium">총 할인액</p>
+                        <h3 class="text-2xl font-bold text-gray-900" id="kpiTotalDiscount">0 원</h3>
+                    </div>
+                </div>
+
+                <!-- Number of Transactions/Rows -->
+                <div class="glass-card rounded-xl p-6 flex items-center gap-4 border-l-4 border-purple-500">
+                    <div class="bg-purple-100 p-3 rounded-full text-purple-600">
+                        <i class="ph ph-receipt text-2xl"></i>
+                    </div>
+                    <div>
+                        <p class="text-sm text-gray-500 font-medium">판매 건수</p>
+                        <h3 class="text-2xl font-bold text-gray-900" id="kpiTotalTransactions">0 건</h3>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Active Filters Display -->
+            <div id="activeFiltersContainer" class="hidden bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex items-center gap-3 transition-all pdf-avoid-break">
+                <span class="text-sm font-semibold text-gray-600 flex items-center gap-1">
+                    <i class="ph ph-funnel text-lg"></i> 적용된 필터:
+                </span>
+                <div id="filterBadges" class="flex flex-wrap gap-2">
+                    <!-- Badges will be injected here -->
+                </div>
+                <button onclick="clearAllFilters()" class="no-pdf ml-auto text-sm text-gray-500 hover:text-red-500 transition-colors flex items-center gap-1 font-medium">
+                    필터 초기화 <i class="ph-bold ph-arrow-counter-clockwise"></i>
+                </button>
+            </div>
+
+            <!-- Charts Section (Daily Trend & Category Breakdown) -->
+            <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                <!-- Trend Chart (Spans 2 columns on large screens) -->
+                <div class="glass-card rounded-xl p-6 lg:col-span-2 shadow-sm pdf-avoid-break">
+                    <h3 class="text-lg font-semibold text-gray-800 mb-4 flex items-center gap-2">
+                        <i class="ph ph-trend-up text-primary"></i> 일자별 매출 추이
+                    </h3>
+                    <div class="relative h-72 w-full">
+                        <canvas id="dailyTrendChart"></canvas>
+                    </div>
+                </div>
+
+                <!-- Category Breakdown -->
+                <div class="glass-card rounded-xl p-6 shadow-sm pdf-avoid-break">
+                    <h3 class="text-lg font-semibold text-gray-800 mb-1 flex items-center gap-2">
+                        <i class="ph ph-pie-chart text-secondary"></i> 카테고리별 매출 비중
+                    </h3>
+                    <p class="text-xs text-gray-400 mb-4 ml-7 no-pdf">조각을 클릭하여 필터링 해보세요.</p>
+                    <div class="relative h-72 w-full flex justify-center">
+                        <canvas id="categoryChart"></canvas>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Page Break for Clean PDF Export -->
+            <div class="pdf-page-break"></div>
+            
+            <!-- Store Comparison (Full width) -->
+            <div class="glass-card rounded-xl p-6 shadow-sm pdf-avoid-break">
+                <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
+                    <div>
+                        <h3 class="text-lg font-semibold text-gray-800 flex items-center gap-2">
+                            <i class="ph ph-storefront text-blue-500"></i> 점포별 실적 비교
+                        </h3>
+                        <p class="text-xs text-gray-400 mt-1 no-pdf">막대 또는 선을 클릭하여 특정 지점으로 필터링할 수 있습니다.</p>
+                    </div>
+                    <!-- Chart Mode Switcher to prevent overlapping -->
+                    <div class="flex items-center gap-1 bg-gray-100 p-1 rounded-lg no-pdf text-xs font-medium self-start sm:self-auto shadow-inner border border-gray-200">
+                        <button id="btnStoreCombo" onclick="setStoreChartMode('combo')" class="px-3 py-1.5 rounded-md bg-white text-primary shadow-sm transition-all font-semibold flex items-center gap-1.5 cursor-pointer">
+                            <i class="ph-bold ph-chart-line-up"></i>
+                            <span>막대 + 꺾은선 (추천)</span>
+                        </button>
+                        <button id="btnStoreGrouped" onclick="setStoreChartMode('grouped')" class="px-3 py-1.5 rounded-md text-gray-600 hover:text-gray-900 transition-all flex items-center gap-1.5 cursor-pointer">
+                            <i class="ph-bold ph-chart-bar"></i>
+                            <span>나란히 막대</span>
+                        </button>
+                    </div>
+                </div>
+                <div class="relative h-80 w-full">
+                    <canvas id="storeChart"></canvas>
+                </div>
+            </div>
+
+            <!-- Data Table Preview -->
+            <div id="dataTableCard" class="glass-card rounded-xl p-6 shadow-sm overflow-hidden flex flex-col h-96 pdf-avoid-break">
+                <div class="flex justify-between items-center mb-4">
+                    <h3 class="text-lg font-semibold text-gray-800 flex items-center gap-2">
+                        <i class="ph ph-table text-gray-600"></i> 원본 데이터 미리보기 (<span id="tablePreviewCount">최신 100건</span>)
+                    </h3>
+                </div>
+                <div id="dataTableScrollContainer" class="overflow-auto flex-grow rounded-lg border border-gray-200">
+                    <table class="min-w-full divide-y divide-gray-200">
+                        <thead class="bg-gray-50 sticky top-0 shadow-sm">
+                            <tr>
+                                <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">일자</th>
+                                <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">점포</th>
+                                <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">카테고리</th>
+                                <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">상품명</th>
+                                <th scope="col" class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">수량</th>
+                                <th scope="col" class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">매출액</th>
+                            </tr>
+                        </thead>
+                        <tbody id="dataTableBody" class="bg-white divide-y divide-gray-200">
+                            <!-- Table rows will be inserted here dynamically -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- Initial Welcome State -->
+        <div id="welcomeState" class="flex flex-col items-center justify-center py-20 text-center">
+            <div class="bg-indigo-50 p-6 rounded-full mb-6">
+                <i class="ph-duotone ph-file-csv text-6xl text-primary"></i>
+            </div>
+            <h2 class="text-2xl font-bold text-gray-800 mb-2">데이터를 분석해 보세요</h2>
+            <p class="text-gray-500 max-w-md mx-auto mb-8">
+                우측 상단의 'CSV 파일 업로드' 버튼을 클릭하여 제공해주신 이미지 형식의 매출 데이터를 업로드하면 대시보드가 자동으로 생성됩니다.
+            </p>
+            
+            <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-100 max-w-2xl text-left">
+                <h4 class="font-semibold text-gray-700 mb-3 text-sm">요구되는 CSV 컬럼 형식 (헤더 포함):</h4>
+                <div class="flex flex-wrap gap-2 text-sm text-gray-600 font-mono bg-gray-50 p-3 rounded">
+                    <span>일자</span>, <span>점포</span>, <span>카테고리</span>, <span>상품코드</span>, <span>상품명</span>, <span>판매수량</span>, <span>정상단가</span>, <span>할인액</span>, <span>매출액</span>, <span>행사적용</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- 간편 계산기 -->
+        <div id="calcContainer" class="mt-12 glass-card rounded-xl p-6 shadow-sm max-w-sm mx-auto mb-12 no-print no-pdf">
+            <h3 class="text-lg font-semibold text-gray-800 mb-4 flex items-center gap-2 justify-center">
+                <i class="ph ph-calculator text-primary"></i> 간편 계산기
+            </h3>
+            <div class="bg-gray-100 rounded-lg p-4 mb-4 text-right text-2xl font-mono text-gray-800 h-16 flex items-center justify-end overflow-hidden break-all shadow-inner border border-gray-200" id="calcDisplay">
+                0
+            </div>
+            <div class="grid grid-cols-4 gap-2">
+                <!-- Row 1 -->
+                <button onclick="calcClear()" class="col-span-2 bg-red-100 hover:bg-red-200 text-red-600 font-bold py-3 rounded-lg transition-colors shadow-sm">AC</button>
+                <button onclick="calcDelete()" class="bg-orange-100 hover:bg-orange-200 text-orange-700 font-bold py-3 rounded-lg transition-colors shadow-sm flex justify-center items-center"><i class="ph-bold ph-backspace text-xl"></i></button>
+                <button onclick="calcInput('/')" class="bg-indigo-100 hover:bg-indigo-200 text-primary font-bold py-3 rounded-lg transition-colors shadow-sm text-xl">÷</button>
+                <!-- Row 2 -->
+                <button onclick="calcInput('7')" class="bg-white border border-gray-200 hover:bg-gray-50 text-gray-800 font-bold py-3 rounded-lg transition-colors shadow-sm text-lg">7</button>
+                <button onclick="calcInput('8')" class="bg-white border border-gray-200 hover:bg-gray-50 text-gray-800 font-bold py-3 rounded-lg transition-colors shadow-sm text-lg">8</button>
+                <button onclick="calcInput('9')" class="bg-white border border-gray-200 hover:bg-gray-50 text-gray-800 font-bold py-3 rounded-lg transition-colors shadow-sm text-lg">9</button>
+                <button onclick="calcInput('*')" class="bg-indigo-100 hover:bg-indigo-200 text-primary font-bold py-3 rounded-lg transition-colors shadow-sm text-xl">×</button>
+                <!-- Row 3 -->
+                <button onclick="calcInput('4')" class="bg-white border border-gray-200 hover:bg-gray-50 text-gray-800 font-bold py-3 rounded-lg transition-colors shadow-sm text-lg">4</button>
+                <button onclick="calcInput('5')" class="bg-white border border-gray-200 hover:bg-gray-50 text-gray-800 font-bold py-3 rounded-lg transition-colors shadow-sm text-lg">5</button>
+                <button onclick="calcInput('6')" class="bg-white border border-gray-200 hover:bg-gray-50 text-gray-800 font-bold py-3 rounded-lg transition-colors shadow-sm text-lg">6</button>
+                <button onclick="calcInput('-')" class="bg-indigo-100 hover:bg-indigo-200 text-primary font-bold py-3 rounded-lg transition-colors shadow-sm text-xl">-</button>
+                <!-- Row 4 -->
+                <button onclick="calcInput('1')" class="bg-white border border-gray-200 hover:bg-gray-50 text-gray-800 font-bold py-3 rounded-lg transition-colors shadow-sm text-lg">1</button>
+                <button onclick="calcInput('2')" class="bg-white border border-gray-200 hover:bg-gray-50 text-gray-800 font-bold py-3 rounded-lg transition-colors shadow-sm text-lg">2</button>
+                <button onclick="calcInput('3')" class="bg-white border border-gray-200 hover:bg-gray-50 text-gray-800 font-bold py-3 rounded-lg transition-colors shadow-sm text-lg">3</button>
+                <button onclick="calcInput('+')" class="bg-indigo-100 hover:bg-indigo-200 text-primary font-bold py-3 rounded-lg transition-colors shadow-sm text-xl">+</button>
+                <!-- Row 5 -->
+                <button onclick="calcInput('0')" class="col-span-2 bg-white border border-gray-200 hover:bg-gray-50 text-gray-800 font-bold py-3 rounded-lg transition-colors shadow-sm text-lg">0</button>
+                <button onclick="calcInput('.')" class="bg-white border border-gray-200 hover:bg-gray-50 text-gray-800 font-bold py-3 rounded-lg transition-colors shadow-sm text-lg">.</button>
+                <button onclick="calcCalculate()" class="bg-primary hover:bg-indigo-700 text-white font-bold py-3 rounded-lg transition-colors shadow-sm text-xl">=</button>
+            </div>
+        </div>
+
+    </main>
+
+    <script>
+        // Global variables to store chart instances so we can destroy them before redrawing
+        let trendChartInstance = null;
+        let categoryChartInstance = null;
+        let storeChartInstance = null;
+        let storeChartMode = 'combo'; // 'combo' (Bar + Line) or 'grouped' (Side-by-side bars)
+        let lastStoreData = null; // Cache store data for mode toggle
+
+        // Data and Filter State
+        let rawCsvData = [];
+        let currentFilteredData = [];
+        let availableStores = []; // Store unique store names
+        let activeFilters = {
+            store: null,
+            category: null,
+            dateRange: { start: null, end: null }
+        };
+
+        // Chart.js Default styling
+        Chart.defaults.font.family = "'Inter', sans-serif";
+        Chart.defaults.color = '#6B7280';
+        Chart.defaults.plugins.tooltip.backgroundColor = 'rgba(31, 41, 55, 0.9)';
+        Chart.defaults.plugins.tooltip.padding = 10;
+        Chart.defaults.plugins.tooltip.cornerRadius = 8;
+
+        const colorPalette = [
+            '#4F46E5', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6', 
+            '#EC4899', '#06B6D4', '#F97316', '#14B8A6', '#6366F1'
+        ];
+
+        // Format numbers as Korean Won or generic number with commas
+        const formatNumber = (num) => new Intl.NumberFormat('ko-KR').format(num);
+        const formatCurrency = (num) => formatNumber(num) + ' 원';
+
+        // Event listener for file upload
+        document.getElementById('csvFileInput').addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            // Show loading, hide welcome and dashboard
+            document.getElementById('welcomeState').classList.add('hidden');
+            document.getElementById('dashboardContent').classList.add('hidden');
+            document.getElementById('loadingIndicator').classList.remove('hidden');
+
+            // Reset filters on new upload
+            activeFilters = { store: null, category: null, dateRange: { start: null, end: null } };
+
+            parseCsvFileWithEncoding(file, 'EUC-KR');
+        });
+
+        function parseCsvFileWithEncoding(file, encoding) {
+            Papa.parse(file, {
+                header: true, // Use first row as keys
+                skipEmptyLines: true,
+                dynamicTyping: true, // Automatically convert numbers
+                encoding: encoding,
+                complete: function(results) {
+                    try {
+                        const data = results.data;
+                        if (!data || data.length === 0) throw new Error("데이터가 비어있습니다.");
+                        
+                        const firstRow = data[0];
+                        // If EUC-KR failed to match Korean headers, try UTF-8 as fallback
+                        if ((!('일자' in firstRow) || !('매출액' in firstRow) || !('점포' in firstRow)) && encoding !== 'UTF-8') {
+                            parseCsvFileWithEncoding(file, 'UTF-8');
+                            return;
+                        }
+
+                        if (!('일자' in firstRow) || !('매출액' in firstRow) || !('점포' in firstRow)) {
+                            alert("CSV 파일의 헤더 형식이 올바르지 않습니다. '일자', '점포', '매출액' 등의 열이 필요합니다.");
+                            resetUI();
+                            return;
+                        }
+
+                        // Clean data once on upload
+                        rawCsvData = data.map(row => ({
+                            ...row,
+                            판매수량: Number(String(row['판매수량'] || 0).replace(/,/g, '')),
+                            할인액: Number(String(row['할인액'] || 0).replace(/,/g, '')),
+                            매출액: Number(String(row['매출액'] || 0).replace(/,/g, '')),
+                            정상단가: Number(String(row['정상단가'] || 0).replace(/,/g, ''))
+                        }));
+                        
+                        // Extract unique stores and setup date picker
+                        populateStoreDropdown();
+                        setupDateRangePicker();
+
+                        applyFiltersAndRender();
+                    } catch (error) {
+                        console.error("Data processing error:", error);
+                        alert("데이터 처리 중 오류가 발생했습니다: " + error.message);
+                        resetUI();
+                    }
+                },
+                error: function(err) {
+                    console.error("CSV Parse Error:", err);
+                    alert("파일을 읽는 중 오류가 발생했습니다.");
+                    resetUI();
+                }
+            });
+        }
+
+        function resetUI() {
+            document.getElementById('loadingIndicator').classList.add('hidden');
+            document.getElementById('welcomeState').classList.remove('hidden');
+            document.getElementById('dashboardContent').classList.add('hidden');
+            document.getElementById('storeSelectorContainer').classList.add('hidden');
+            document.getElementById('dateSelectorContainer').classList.add('hidden');
+            const pdfBtn = document.getElementById('btnExportPdf');
+            if (pdfBtn) pdfBtn.classList.add('hidden');
+            document.getElementById('csvFileInput').value = '';
+        }
+
+        // --- Filter Logic ---
+        function populateStoreDropdown() {
+            const storeSet = new Set();
+            rawCsvData.forEach(row => {
+                if (row['점포']) storeSet.add(row['점포']);
+            });
+            availableStores = Array.from(storeSet).sort();
+
+            const selectEl = document.getElementById('storeSelect');
+            // Clear existing options except 'all'
+            selectEl.innerHTML = '<option value="all">전체 지점 보기</option>';
+            
+            availableStores.forEach(store => {
+                const option = document.createElement('option');
+                option.value = store;
+                option.textContent = store;
+                selectEl.appendChild(option);
+            });
+
+            document.getElementById('storeSelectorContainer').classList.remove('hidden');
+        }
+
+        function setupDateRangePicker() {
+            let minDate = null;
+            let maxDate = null;
+            
+            rawCsvData.forEach(row => {
+                if (row['일자']) {
+                    let d = row['일자'];
+                    if (d instanceof Date) d = d.toISOString().split('T')[0];
+                    if (!minDate || d < minDate) minDate = d;
+                    if (!maxDate || d > maxDate) maxDate = d;
+                }
+            });
+
+            const startInput = document.getElementById('startDate');
+            const endInput = document.getElementById('endDate');
+            
+            if(minDate && maxDate) {
+                // Set constraints based on data
+                startInput.min = minDate;
+                startInput.max = maxDate;
+                endInput.min = minDate;
+                endInput.max = maxDate;
+                
+                // Clear inputs initially to show all data
+                startInput.value = '';
+                endInput.value = '';
+            }
+
+            document.getElementById('dateSelectorContainer').classList.remove('hidden');
+        }
+
+        function handleDateRangeChange() {
+            const startVal = document.getElementById('startDate').value;
+            const endVal = document.getElementById('endDate').value;
+            
+            activeFilters.dateRange.start = startVal || null;
+            activeFilters.dateRange.end = endVal || null;
+            
+            // Validate: if both selected, ensure start is not after end
+            if (startVal && endVal && startVal > endVal) {
+                alert("시작일은 종료일보다 이전이어야 합니다.");
+                document.getElementById('endDate').value = startVal;
+                activeFilters.dateRange.end = startVal;
+            }
+            
+            applyFiltersAndRender();
+        }
+
+        function handleStoreSelection(storeValue) {
+            if (storeValue === 'all') {
+                activeFilters.store = null;
+            } else {
+                activeFilters.store = storeValue;
+            }
+            applyFiltersAndRender();
+        }
+
+        function applyFiltersAndRender() {
+            // Apply current filters to raw data
+            let filteredData = rawCsvData;
+            
+            if (activeFilters.store) {
+                filteredData = filteredData.filter(row => row['점포'] === activeFilters.store);
+            }
+            if (activeFilters.category) {
+                filteredData = filteredData.filter(row => row['카테고리'] === activeFilters.category);
+            }
+            if (activeFilters.dateRange.start || activeFilters.dateRange.end) {
+                filteredData = filteredData.filter(row => {
+                    let d = row['일자'];
+                    if (d instanceof Date) d = d.toISOString().split('T')[0];
+                    
+                    let pass = true;
+                    if (activeFilters.dateRange.start && d < activeFilters.dateRange.start) pass = false;
+                    if (activeFilters.dateRange.end && d > activeFilters.dateRange.end) pass = false;
+                    return pass;
+                });
+            }
+
+            // Sync dropdown UI with active filters state
+            const selectEl = document.getElementById('storeSelect');
+            if (activeFilters.store) {
+                selectEl.value = activeFilters.store;
+            } else {
+                selectEl.value = 'all';
+            }
+
+            const startInput = document.getElementById('startDate');
+            const endInput = document.getElementById('endDate');
+            startInput.value = activeFilters.dateRange.start || '';
+            endInput.value = activeFilters.dateRange.end || '';
+
+            // Update UI components
+            updateFilterUI();
+            processDataAndRender(filteredData);
+        }
+
+        function removeFilter(key) {
+            if (key === 'dateRange') {
+                activeFilters.dateRange = { start: null, end: null };
+            } else {
+                activeFilters[key] = null;
+            }
+            applyFiltersAndRender();
+        }
+
+        function clearAllFilters() {
+            activeFilters = { store: null, category: null, dateRange: { start: null, end: null } };
+            applyFiltersAndRender();
+        }
+
+        function updateFilterUI() {
+            const container = document.getElementById('activeFiltersContainer');
+            const badgesContainer = document.getElementById('filterBadges');
+            badgesContainer.innerHTML = '';
+
+            let hasFilters = false;
+
+            if (activeFilters.store) {
+                hasFilters = true;
+                badgesContainer.innerHTML += `
+                    <span class="inline-flex items-center gap-1 px-3 py-1.5 rounded-full text-sm bg-blue-50 text-blue-700 border border-blue-200 shadow-sm transition-all hover:bg-blue-100">
+                        <span class="font-bold text-blue-900">점포:</span> ${activeFilters.store}
+                        <button onclick="removeFilter('store')" class="hover:text-red-500 focus:outline-none ml-1 flex items-center justify-center">
+                            <i class="ph-bold ph-x"></i>
+                        </button>
+                    </span>
+                `;
+            }
+            if (activeFilters.dateRange.start || activeFilters.dateRange.end) {
+                hasFilters = true;
+                let dateText = "";
+                if (activeFilters.dateRange.start && activeFilters.dateRange.end) {
+                    if (activeFilters.dateRange.start === activeFilters.dateRange.end) {
+                        dateText = activeFilters.dateRange.start;
+                    } else {
+                        dateText = `${activeFilters.dateRange.start} ~ ${activeFilters.dateRange.end}`;
+                    }
+                } else if (activeFilters.dateRange.start) {
+                    dateText = `${activeFilters.dateRange.start} 부터`;
+                } else if (activeFilters.dateRange.end) {
+                    dateText = `${activeFilters.dateRange.end} 까지`;
+                }
+
+                badgesContainer.innerHTML += `
+                    <span class="inline-flex items-center gap-1 px-3 py-1.5 rounded-full text-sm bg-purple-50 text-purple-700 border border-purple-200 shadow-sm transition-all hover:bg-purple-100">
+                        <span class="font-bold text-purple-900">기간:</span> ${dateText}
+                        <button onclick="removeFilter('dateRange')" class="hover:text-red-500 focus:outline-none ml-1 flex items-center justify-center">
+                            <i class="ph-bold ph-x"></i>
+                        </button>
+                    </span>
+                `;
+            }
+
+            if (hasFilters) {
+                container.classList.remove('hidden');
+            } else {
+                container.classList.add('hidden');
+            }
+        }
+
+        function processDataAndRender(cleanedData) {
+            // 1. Calculate KPIs
+            let totalRevenue = 0;
+            let totalQuantity = 0;
+            let totalDiscount = 0;
+            
+            cleanedData.forEach(row => {
+                totalRevenue += row['매출액'];
+                totalQuantity += row['판매수량'];
+                totalDiscount += row['할인액'];
+            });
+
+            // Update KPI UI
+            document.getElementById('kpiTotalRevenue').innerText = formatCurrency(totalRevenue);
+            document.getElementById('kpiTotalQuantity').innerText = formatNumber(totalQuantity) + ' 개';
+            document.getElementById('kpiTotalDiscount').innerText = formatCurrency(totalDiscount);
+            document.getElementById('kpiTotalTransactions').innerText = formatNumber(cleanedData.length) + ' 건';
+
+            // 3. Aggregate Data for Charts
+            
+            // 3a. Daily Trend
+            const dailyData = {};
+            cleanedData.forEach(row => {
+                const date = row['일자'];
+                if (!date) return;
+                
+                // Format date string if it's a full Date object or specific string format
+                let dateStr = date;
+                if(date instanceof Date) {
+                    dateStr = date.toISOString().split('T')[0];
+                }
+                
+                if (!dailyData[dateStr]) dailyData[dateStr] = { revenue: 0, quantity: 0 };
+                dailyData[dateStr].revenue += row['매출액'];
+                dailyData[dateStr].quantity += row['판매수량'];
+            });
+            
+            // Sort dates
+            const sortedDates = Object.keys(dailyData).sort();
+            const trendLabels = sortedDates;
+            const trendRevenueData = sortedDates.map(date => dailyData[date].revenue);
+
+            // 3b. Category Breakdown
+            const categoryData = {};
+            cleanedData.forEach(row => {
+                const cat = row['카테고리'] || '미분류';
+                if (!categoryData[cat]) categoryData[cat] = 0;
+                categoryData[cat] += row['매출액'];
+            });
+            // Sort categories by revenue descending
+            const sortedCategories = Object.keys(categoryData).sort((a,b) => categoryData[b] - categoryData[a]);
+            const catLabels = sortedCategories;
+            const catValues = sortedCategories.map(cat => categoryData[cat]);
+
+            // 3c. Store Comparison
+            const storeData = {};
+            cleanedData.forEach(row => {
+                const store = row['점포'] || '미상';
+                if (!storeData[store]) storeData[store] = { revenue: 0, quantity: 0 };
+                storeData[store].revenue += row['매출액'];
+                storeData[store].quantity += row['판매수량'];
+            });
+            const sortedStores = Object.keys(storeData).sort((a,b) => storeData[b].revenue - storeData[a].revenue);
+            const storeLabels = sortedStores;
+            const storeRevValues = sortedStores.map(store => storeData[store].revenue);
+            const storeQtyValues = sortedStores.map(store => storeData[store].quantity);
+
+
+            // Cache store data for mode toggle
+            lastStoreData = { labels: storeLabels, rev: storeRevValues, qty: storeQtyValues };
+
+            // Render Charts
+            renderTrendChart(trendLabels, trendRevenueData);
+            renderCategoryChart(catLabels, catValues);
+            renderStoreChart(storeLabels, storeRevValues, storeQtyValues);
+
+            // Populate Table
+            currentFilteredData = cleanedData;
+            renderTable(cleanedData);
+
+            // Hide loading, show dashboard
+            document.getElementById('loadingIndicator').classList.add('hidden');
+            document.getElementById('dashboardContent').classList.remove('hidden');
+            const pdfBtn = document.getElementById('btnExportPdf');
+            if (pdfBtn) pdfBtn.classList.remove('hidden');
+        }
+
+        function renderTrendChart(labels, data) {
+            const ctx = document.getElementById('dailyTrendChart').getContext('2d');
+            
+            if (trendChartInstance) {
+                trendChartInstance.destroy();
+                trendChartInstance = null;
+            }
+
+            // Gradient for line chart
+            const gradient = ctx.createLinearGradient(0, 0, 0, 400);
+            gradient.addColorStop(0, 'rgba(79, 70, 229, 0.4)');
+            gradient.addColorStop(1, 'rgba(79, 70, 229, 0.0)');
+
+            // Adjust point radius based on data density so dots don't overlap into a blob
+            const pointRadius = labels.length > 25 ? 2 : 4;
+
+            trendChartInstance = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        label: '일별 매출액',
+                        data: data,
+                        borderColor: '#4F46E5',
+                        backgroundColor: gradient,
+                        borderWidth: 2,
+                        pointBackgroundColor: '#ffffff',
+                        pointBorderColor: '#4F46E5',
+                        pointBorderWidth: 2,
+                        pointRadius: pointRadius,
+                        pointHoverRadius: 6,
+                        fill: true,
+                        tension: 0.3
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    interaction: {
+                        mode: 'index',
+                        intersect: false,
+                    },
+                    onClick: (e, elements) => {
+                        if (elements.length > 0) {
+                            const idx = elements[0].index;
+                            const clickedDate = trendChartInstance.data.labels[idx];
+                            activeFilters.dateRange = { start: clickedDate, end: clickedDate };
+                            applyFiltersAndRender();
+                        }
+                    },
+                    onHover: (e, elements) => {
+                        e.native.target.style.cursor = elements.length > 0 ? 'pointer' : 'default';
+                    },
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: {
+                            callbacks: {
+                                label: function(context) {
+                                    return ' 매출액: ' + formatCurrency(context.raw);
+                                }
+                            }
+                        }
+                    },
+                    scales: {
+                        x: {
+                            grid: { display: false, drawBorder: false },
+                            ticks: {
+                                autoSkip: true,
+                                maxTicksLimit: 10,
+                                maxRotation: 0,
+                                minRotation: 0,
+                                font: { size: 11 },
+                                callback: function(val, index) {
+                                    const label = this.getLabelForValue(val);
+                                    if (!label) return '';
+                                    // Format YYYY-MM-DD to MM/DD to prevent label collision
+                                    if (typeof label === 'string' && label.includes('-')) {
+                                        const parts = label.split('-');
+                                        if (parts.length === 3) return `${parts[1]}/${parts[2]}`;
+                                    }
+                                    return label;
+                                }
+                            }
+                        },
+                        y: {
+                            beginAtZero: true,
+                            grid: {
+                                color: '#f3f4f6',
+                                drawBorder: false,
+                            },
+                            ticks: {
+                                callback: function(value) {
+                                    if(value >= 100000000) return (value / 100000000).toFixed(1) + '억';
+                                    if(value >= 10000) return (value / 10000).toFixed(0) + '만';
+                                    return formatNumber(value);
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+        function renderCategoryChart(labels, data) {
+            const ctx = document.getElementById('categoryChart').getContext('2d');
+            
+            if (categoryChartInstance) {
+                categoryChartInstance.destroy();
+                categoryChartInstance = null;
+            }
+
+            categoryChartInstance = new Chart(ctx, {
+                type: 'doughnut',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        data: data,
+                        backgroundColor: colorPalette,
+                        borderWidth: 2,
+                        borderColor: '#ffffff',
+                        hoverOffset: 8
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    cutout: '60%',
+                    onClick: (e, elements) => {
+                        if (elements.length > 0) {
+                            const idx = elements[0].index;
+                            const clickedCategory = categoryChartInstance.data.labels[idx];
+                            activeFilters.category = clickedCategory;
+                            applyFiltersAndRender();
+                        }
+                    },
+                    onHover: (e, elements) => {
+                        e.native.target.style.cursor = elements.length > 0 ? 'pointer' : 'default';
+                    },
+                    plugins: {
+                        legend: {
+                            position: 'bottom',
+                            labels: {
+                                usePointStyle: true,
+                                boxWidth: 8,
+                                padding: 12,
+                                font: { size: 11 }
+                            }
+                        },
+                        tooltip: {
+                            callbacks: {
+                                label: function(context) {
+                                    const total = context.dataset.data.reduce((a, b) => a + b, 0);
+                                    const percentage = total > 0 ? ((context.raw / total) * 100).toFixed(1) + '%' : '0%';
+                                    return ` ${context.label}: ${formatCurrency(context.raw)} (${percentage})`;
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+        function renderStoreChart(labels, revData, qtyData) {
+            const ctx = document.getElementById('storeChart').getContext('2d');
+            
+            if (storeChartInstance) {
+                storeChartInstance.destroy();
+                storeChartInstance = null;
+            }
+
+            const isCombo = (storeChartMode === 'combo');
+
+            const datasets = [
+                {
+                    label: '매출액 (원)',
+                    data: revData,
+                    type: 'bar',
+                    backgroundColor: 'rgba(79, 70, 229, 0.85)', // Indigo
+                    hoverBackgroundColor: 'rgba(79, 70, 229, 1)',
+                    borderRadius: 6,
+                    yAxisID: 'y',
+                    order: 2,
+                    stack: isCombo ? undefined : 'revStack',
+                    barPercentage: isCombo ? 0.45 : 0.35,
+                    categoryPercentage: 0.7
+                },
+                isCombo ? {
+                    label: '판매수량 (개)',
+                    data: qtyData,
+                    type: 'line',
+                    borderColor: '#10B981', // Emerald
+                    backgroundColor: '#10B981',
+                    borderWidth: 3,
+                    pointBackgroundColor: '#ffffff',
+                    pointBorderColor: '#10B981',
+                    pointBorderWidth: 2,
+                    pointRadius: 5,
+                    pointHoverRadius: 7,
+                    tension: 0.3,
+                    yAxisID: 'y1',
+                    order: 1
+                } : {
+                    label: '판매수량 (개)',
+                    data: qtyData,
+                    type: 'bar',
+                    backgroundColor: 'rgba(16, 185, 129, 0.85)', // Emerald
+                    hoverBackgroundColor: 'rgba(16, 185, 129, 1)',
+                    borderRadius: 6,
+                    yAxisID: 'y1',
+                    order: 1,
+                    stack: 'qtyStack',
+                    barPercentage: 0.35,
+                    categoryPercentage: 0.7
+                }
+            ];
+
+            storeChartInstance = new Chart(ctx, {
+                data: {
+                    labels: labels,
+                    datasets: datasets
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    interaction: {
+                        mode: 'index',
+                        intersect: false,
+                    },
+                    onClick: (e, elements) => {
+                        if (elements.length > 0) {
+                            const idx = elements[0].index;
+                            const clickedStore = storeChartInstance.data.labels[idx];
+                            activeFilters.store = clickedStore;
+                            applyFiltersAndRender();
+                        }
+                    },
+                    onHover: (e, elements) => {
+                        e.native.target.style.cursor = elements.length > 0 ? 'pointer' : 'default';
+                    },
+                    plugins: {
+                        legend: {
+                            display: true,
+                            position: 'top',
+                            align: 'end',
+                            labels: {
+                                usePointStyle: true,
+                                boxWidth: 8,
+                                padding: 16,
+                                font: { size: 12, weight: '500' }
+                            }
+                        },
+                        tooltip: {
+                            callbacks: {
+                                label: function(context) {
+                                    if (context.datasetIndex === 0) {
+                                        return ` 매출액: ${formatCurrency(context.raw)}`;
+                                    } else {
+                                        return ` 판매수량: ${formatNumber(context.raw)} 개`;
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    scales: {
+                        x: {
+                            grid: { display: false },
+                            ticks: {
+                                font: { size: 12, weight: '600' }
+                            }
+                        },
+                        y: {
+                            type: 'linear',
+                            display: true,
+                            position: 'left',
+                            title: { display: true, text: '매출액 (원)', font: { size: 11, weight: '600' } },
+                            grid: { color: '#f3f4f6' },
+                            ticks: {
+                                callback: function(value) {
+                                    if(value >= 100000000) return (value / 100000000).toFixed(1) + '억';
+                                    if(value >= 10000) return (value / 10000).toFixed(0) + '만';
+                                    return value;
+                                }
+                            }
+                        },
+                        y1: {
+                            type: 'linear',
+                            display: true,
+                            position: 'right',
+                            title: { display: true, text: '판매수량 (개)', font: {size: 10} },
+                            grid: { drawOnChartArea: false }, // only want the grid lines for one axis to show up
+                            ticks: {
+                                callback: function(value) { return formatNumber(value); }
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+        function renderTable(data, limit = 100) {
+            const tbody = document.getElementById('dataTableBody');
+            tbody.innerHTML = '';
+
+            // Show maximum limit rows for preview to keep DOM light
+            const previewData = data.slice(0, limit);
+            const countLabel = document.getElementById('tablePreviewCount');
+            if (countLabel) {
+                countLabel.innerText = limit < 100 ? `상위 ${previewData.length}건 요약` : `최신 ${previewData.length}건`;
+            }
+
+            previewData.forEach((row, index) => {
+                const tr = document.createElement('tr');
+                tr.className = index % 2 === 0 ? 'bg-white' : 'bg-gray-50'; // Zebra striping
+                
+                // Handling potential missing values gracefully
+                const date = row['일자'] || '-';
+                const store = row['점포'] || '-';
+                const category = row['카테고리'] || '-';
+                const productName = row['상품명'] || '-';
+                const qty = row['판매수량'] !== undefined ? formatNumber(row['판매수량']) : '-';
+                const rev = row['매출액'] !== undefined ? formatCurrency(row['매출액']) : '-';
+
+                tr.innerHTML = `
+                    <td class="px-6 py-3 whitespace-nowrap text-sm text-gray-900">${date}</td>
+                    <td class="px-6 py-3 whitespace-nowrap text-sm font-medium text-gray-900">${store}</td>
+                    <td class="px-6 py-3 whitespace-nowrap text-sm text-gray-500">
+                        <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-blue-100 text-blue-800">
+                            ${category}
+                        </span>
+                    </td>
+                    <td class="px-6 py-3 whitespace-nowrap text-sm text-gray-500 truncate max-w-xs" title="${productName}">${productName}</td>
+                    <td class="px-6 py-3 whitespace-nowrap text-sm text-gray-900 text-right font-medium">${qty}</td>
+                    <td class="px-6 py-3 whitespace-nowrap text-sm text-primary text-right font-semibold">${rev}</td>
+                `;
+                tbody.appendChild(tr);
+            });
+        }
+
+        // --- 간편 계산기 로직 ---
+        let calcExpression = '';
+        
+        function updateCalcDisplay(value) {
+            const displayElement = document.getElementById('calcDisplay');
+            if (!displayElement) return;
+            
+            if (value === '') {
+                displayElement.innerText = '0';
+            } else {
+                // 연산자 기호를 보기 좋게 변경하여 표시
+                const displayValue = value.replace(/\*/g, '×').replace(/\//g, '÷');
+                displayElement.innerText = displayValue;
+            }
+        }
+
+        function calcInput(char) {
+            const operators = ['+', '-', '*', '/'];
+            const lastChar = calcExpression.slice(-1);
+            
+            // 처음 입력 방지 및 연산자 중복 입력 방지 로직
+            if (calcExpression === '' && char !== '-' && operators.includes(char)) return;
+            if (operators.includes(lastChar) && operators.includes(char)) {
+                // 연산자가 연속으로 오면 마지막 연산자를 교체
+                calcExpression = calcExpression.slice(0, -1) + char;
+            } else {
+                calcExpression += char;
+            }
+            updateCalcDisplay(calcExpression);
+        }
+
+        function calcClear() {
+            calcExpression = '';
+            updateCalcDisplay(calcExpression);
+        }
+
+        function calcDelete() {
+            calcExpression = calcExpression.slice(0, -1);
+            updateCalcDisplay(calcExpression);
+        }
+
+        function calcCalculate() {
+            try {
+                if (calcExpression === '') return;
+                
+                // 보안을 위해 입력값을 버튼으로만 제한했으므로 new Function을 사용하여 문자열 수식 계산
+                const result = new Function('return ' + calcExpression)();
+                
+                // 부동소수점 정밀도 오류 처리 (예: 0.1 + 0.2 = 0.30000000000000004)
+                const formattedResult = Math.round(result * 10000000000) / 10000000000; 
+                
+                // 결과값이 비정상적인 경우 에러 처리
+                if(!isFinite(formattedResult) || isNaN(formattedResult)) {
+                     throw new Error("Invalid");
+                }
+
+                calcExpression = String(formattedResult);
+                updateCalcDisplay(calcExpression);
+            } catch (e) {
+                document.getElementById('calcDisplay').innerText = 'Error';
+                calcExpression = '';
+            }
+        }
+
+        // --- PDF 내보내기 로직 ---
+        let currentPdfOrientation = 'landscape';
+
+        function togglePdfMenu(e) {
+            e.stopPropagation();
+            const menu = document.getElementById('pdfMenuDropdown');
+            if (menu) menu.classList.toggle('hidden');
+        }
+
+        function selectPdfOrientation(orientation) {
+            const menu = document.getElementById('pdfMenuDropdown');
+            if (menu) menu.classList.add('hidden');
+            exportDashboardToPdf(orientation);
+        }
+
+        // Close dropdown when clicking outside
+        document.addEventListener('click', function(e) {
+            const group = document.getElementById('btnExportPdf');
+            const menu = document.getElementById('pdfMenuDropdown');
+            if (menu && !menu.classList.contains('hidden')) {
+                if (group && !group.contains(e.target)) {
+                    menu.classList.add('hidden');
+                }
+            }
+        });
+
+        async function exportDashboardToPdf(orientation = 'landscape') {
+            if (!rawCsvData || rawCsvData.length === 0) {
+                alert("PDF로 내보낼 분석 데이터가 없습니다. 먼저 CSV 파일을 업로드해 주세요.");
+                return;
+            }
+
+            currentPdfOrientation = orientation;
+            const isLandscape = (orientation === 'landscape');
+
+            const exportBtn = document.getElementById('btnExportPdf');
+            const btnIcon = document.getElementById('btnExportPdfIcon');
+            const btnText = document.getElementById('btnExportPdfText');
+
+            // 1. 버튼 로딩 상태 표시
+            if (exportBtn) {
+                exportBtn.classList.add('opacity-75', 'pointer-events-none');
+            }
+            if (btnIcon) btnIcon.className = 'ph-bold ph-spinner animate-spin text-lg';
+            if (btnText) btnText.innerText = isLandscape ? '가로 PDF 생성 중...' : '세로 PDF 생성 중...';
+
+            showToast(`${isLandscape ? '가로 방향(권장)' : '세로 방향'} PDF 보고서를 생성하고 있습니다. 잠시만 기다려주세요...`, 'info');
+
+            // 2. 보고서 헤더 정보 설정
+            const now = new Date();
+            const year = now.getFullYear();
+            const month = String(now.getMonth() + 1).padStart(2, '0');
+            const day = String(now.getDate()).padStart(2, '0');
+            const hours = String(now.getHours()).padStart(2, '0');
+            const minutes = String(now.getMinutes()).padStart(2, '0');
+            const seconds = String(now.getSeconds()).padStart(2, '0');
+            const formattedDate = `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
+
+            const genDateEl = document.getElementById('pdfReportGeneratedAt');
+            if (genDateEl) genDateEl.innerText = `생성 일시: ${formattedDate} (${isLandscape ? '가로 A4' : '세로 A4'})`;
+
+            let filterInfoParts = [];
+            filterInfoParts.push(`점포: ${activeFilters.store || '전체 지점'}`);
+            if (activeFilters.dateRange.start || activeFilters.dateRange.end) {
+                filterInfoParts.push(`기간: ${activeFilters.dateRange.start || '처음'} ~ ${activeFilters.dateRange.end || '현재'}`);
+            }
+            if (activeFilters.category) {
+                filterInfoParts.push(`카테고리: ${activeFilters.category}`);
+            }
+            const filterInfoEl = document.getElementById('pdfReportFilterInfo');
+            if (filterInfoEl) filterInfoEl.innerText = filterInfoParts.join(' | ');
+
+            // 3. PDF용 DOM 스타일 임시 적용
+            document.body.classList.add('exporting-pdf');
+            document.body.classList.add(isLandscape ? 'exporting-pdf-landscape' : 'exporting-pdf-portrait');
+
+            const reportHeader = document.getElementById('pdfReportHeader');
+            if (reportHeader) reportHeader.classList.remove('hidden');
+
+            // 가로 방향일 때는 공간이 넓으므로 18건, 세로일 때는 12건 요약
+            const tableRowsLimit = isLandscape ? 18 : 12;
+            renderTable(currentFilteredData, tableRowsLimit);
+
+            // 파일명 구성 (적용 필터 및 가로/세로 방향 반영)
+            const orientationPart = isLandscape ? '_가로' : '_세로';
+            const storePart = activeFilters.store ? `_${activeFilters.store}` : '_전체지점';
+            const datePart = `${year}${month}${day}`;
+            const filename = `매출분석보고서${orientationPart}${storePart}_${datePart}.pdf`;
+
+            const dashboardEl = document.getElementById('dashboardContent');
+
+            const opt = {
+                margin: isLandscape ? [8, 8, 8, 8] : [10, 10, 10, 10], // mm
+                filename: filename,
+                image: { type: 'jpeg', quality: 0.98 },
+                html2canvas: {
+                    scale: 2,
+                    useCORS: true,
+                    letterRendering: true,
+                    scrollX: 0,
+                    scrollY: 0,
+                    backgroundColor: '#ffffff'
+                },
+                jsPDF: { 
+                    unit: 'mm', 
+                    format: 'a4', 
+                    orientation: isLandscape ? 'landscape' : 'portrait' 
+                },
+                pagebreak: { mode: ['css', 'legacy'] }
+            };
+
+            // DOM 렌더링 안정화 후 PDF 생성
+            setTimeout(() => {
+                html2pdf().set(opt).from(dashboardEl).save()
+                    .then(() => {
+                        showToast(`PDF 보고서(${isLandscape ? '가로' : '세로'})가 성공적으로 다운로드되었습니다!`, 'success');
+                    })
+                    .catch((err) => {
+                        console.error('PDF export failed:', err);
+                        showToast('PDF 생성 중 오류가 발생했습니다.', 'error');
+                        alert('PDF 생성 중 문제가 발생했습니다: ' + (err && err.message ? err.message : err));
+                    })
+                    .finally(() => {
+                        // DOM 원상 복구
+                        document.body.classList.remove('exporting-pdf', 'exporting-pdf-landscape', 'exporting-pdf-portrait');
+                        if (reportHeader) reportHeader.classList.add('hidden');
+                        renderTable(currentFilteredData, 100);
+
+                        // 버튼 상태 복구
+                        if (exportBtn) {
+                            exportBtn.classList.remove('opacity-75', 'pointer-events-none');
+                        }
+                        if (btnIcon) btnIcon.className = 'ph ph-file-pdf text-lg';
+                        if (btnText) btnText.innerText = 'PDF 가로 저장';
+                    });
+            }, 300);
+        }
+
+        // 토스트 알림 함수
+        function showToast(message, type = 'info') {
+            const toast = document.getElementById('toastNotification');
+            const msgEl = document.getElementById('toastMessage');
+            const iconEl = document.getElementById('toastIcon');
+            if (!toast || !msgEl) return;
+
+            msgEl.innerText = message;
+            if (type === 'success') {
+                iconEl.className = 'ph-bold ph-check-circle text-xl text-emerald-400';
+            } else if (type === 'error') {
+                iconEl.className = 'ph-bold ph-warning-circle text-xl text-rose-400';
+            } else {
+                iconEl.className = 'ph-bold ph-info text-xl text-indigo-400';
+            }
+
+            toast.classList.remove('translate-y-20', 'opacity-0');
+            toast.classList.add('translate-y-0', 'opacity-100');
+
+            setTimeout(() => {
+                toast.classList.remove('translate-y-0', 'opacity-100');
+                toast.classList.add('translate-y-20', 'opacity-0');
+            }, 3500);
+        }
+    </script>
+
+    <!-- Toast Notification for feedback -->
+    <div id="toastNotification" class="fixed bottom-6 right-6 z-50 transform translate-y-20 opacity-0 transition-all duration-300 pointer-events-none bg-gray-900 text-white px-5 py-3 rounded-xl shadow-lg flex items-center gap-3">
+        <i id="toastIcon" class="ph-bold ph-info text-xl text-indigo-400"></i>
+        <span id="toastMessage" class="text-sm font-medium"></span>
+    </div>
+</body>
+</html>
